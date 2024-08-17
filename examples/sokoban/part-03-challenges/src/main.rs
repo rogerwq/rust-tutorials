@@ -32,14 +32,18 @@
 
 use std::{collections::HashMap, path::PathBuf};
 
-use ggez::{event::{self, EventHandler}, graphics::{self, Canvas, Color, DrawParam, Image}, input::keyboard::KeyCode, Context, ContextBuilder, GameError, GameResult};
-use specs::{Builder, Component, Join, NullStorage, ReadStorage, RunNow, System, VecStorage, World, WorldExt, WriteStorage};
+use ggez::{conf::WindowMode, event::{self, EventHandler}, graphics::{self, Canvas, Color, DrawParam, Image}, input::keyboard::KeyCode, Context, ContextBuilder, GameError, GameResult};
+use specs::{Builder, Component, Join, NullStorage, ReadStorage, DenseVecStorage, RunNow, System, VecStorage, World, WorldExt, WriteStorage};
 use specs::{Read, Write};
+
+const GAME_WIDTH: u32 = 20;
+const GAME_HEIGHT: u32 = 20;
+const GAME_UNIT_SIZE: f32 = 64.0;
 
 // Components
 struct Position {
-    x: i32,
-    y: i32
+    x: u32,
+    y: u32
 }
 
 impl Component for Position {
@@ -60,10 +64,14 @@ struct InputKeyQueue {
 }
 
 #[derive(PartialEq, Eq, Hash)]
+#[derive(Component)]
 enum EntityType {
-    Player,
-    // Wall,
-    // Crate
+    PlayerUp,
+    PlayerDown,
+    PlayerLeft,
+    PlayerRight,
+    Wall,
+    Crate
 }
 
 #[derive(Default)]
@@ -74,8 +82,12 @@ struct GameImages {
 impl GameImages {
     fn new(ctx: &Context) -> Result<Self, GameError> {
         let mut entity_images = HashMap::new();
-        let player_image = Image::from_path(ctx, "/Character1.png")?;
-        let _ = entity_images.insert(EntityType::Player, player_image);
+        let _ = entity_images.insert(EntityType::PlayerUp, Image::from_path(ctx, "/Character7.png")?);
+        let _ = entity_images.insert(EntityType::PlayerDown, Image::from_path(ctx, "/Character4.png")?);
+        let _ = entity_images.insert(EntityType::PlayerLeft, Image::from_path(ctx, "/Character1.png")?);
+        let _ = entity_images.insert(EntityType::PlayerRight, Image::from_path(ctx, "/Character2.png")?);
+        let _ = entity_images.insert(EntityType::Crate, Image::from_path(ctx, "/CrateDark_Beige.png")?);
+        let _ = entity_images.insert(EntityType::Wall, Image::from_path(ctx, "/Wall_Beige.png")?);
 
         Ok(Self { entity_images })
     }
@@ -100,18 +112,31 @@ struct SysMovePlayer;
 impl<'a> System<'a> for SysMovePlayer {
     type SystemData = (
         Write<'a, InputKeyQueue>,
-        WriteStorage<'a, Position>, 
-        ReadStorage<'a, Moverable>
+        WriteStorage<'a, Position>,
+        ReadStorage<'a, Moverable>,
+        WriteStorage<'a, EntityType>,
     );
 
-    fn run(&mut self, (mut q , mut positions, moverables): Self::SystemData) {
-        for (pos, _mov) in (&mut positions, &moverables).join() { // player
+    fn run(&mut self, (mut q , mut positions, moverables, mut etypes): Self::SystemData) {
+        for (pos, _mov, etype) in (&mut positions, &moverables, &mut etypes).join() { // player
             if let Some(keycode) = q.keys_pressed.pop() {
                 match keycode {
-                    KeyCode::Up => pos.y -= 1,
-                    KeyCode::Down => pos.y += 1,
-                    KeyCode::Left => pos.x -= 1,
-                    KeyCode::Right => pos.x += 1,
+                    KeyCode::Up => {
+                        pos.y = pos.y.saturating_sub(1);
+                        *etype = EntityType::PlayerUp;
+                    }
+                    KeyCode::Down => if pos.y < GAME_HEIGHT - 1 {
+                        pos.y += 1;
+                        *etype = EntityType::PlayerDown;
+                    },
+                    KeyCode::Left => {
+                        pos.x = pos.x.saturating_sub(1);
+                        *etype = EntityType::PlayerLeft;
+                    }
+                    KeyCode::Right => if pos.x < GAME_WIDTH -1 {
+                        pos.x += 1;
+                        *etype = EntityType::PlayerRight;
+                    }
                     _ => ()
                 }
             }
@@ -128,12 +153,13 @@ struct SysRender {
 impl<'a> System<'a> for SysRender {
     type SystemData = (
         Read<'a, GameImages>,
-        ReadStorage<'a, Position>
+        ReadStorage<'a, Position>,
+        ReadStorage<'a, EntityType>,
     );
 
-    fn run(&mut self, (images, positions): Self::SystemData) {
-        for position in (&positions).join() {
-            let image = images.entity_images.get(&EntityType::Player).unwrap();
+    fn run(&mut self, (images, positions, etypes): Self::SystemData) {
+        for (position, etype) in (&positions, &etypes).join() {
+            let image = images.entity_images.get(etype).unwrap();
             let x = position.x as f32 * 64.0;
             let y = position.y as f32 * 64.0;
             let dest = ggez::glam::Vec2::new(x, y);
@@ -187,16 +213,19 @@ impl EventHandler for MyGame {
 fn main() {
     let (mut ctx, event_loop) = ContextBuilder::new("my_game", "Cool Game Author")
         .add_resource_path(PathBuf::from("..").join("images").join("PNG"))
+        .window_mode(WindowMode::default().dimensions(GAME_WIDTH as f32 * GAME_UNIT_SIZE , GAME_HEIGHT as f32 * GAME_UNIT_SIZE))
         .build()
         .expect("aieee, could not create ggez context!");
 
     let mut world = World::new();
     world.register::<Position>();
     world.register::<Moverable>();
+    world.register::<EntityType>();
     world.insert(InputKeyQueue::default());
     world.insert(GameImages::new(&ctx).unwrap());
-    world.create_entity().with(Position { x: 0, y: 0 }).with(Moverable {}).build(); // player
-    // world.create_entity().with(Position { x: 10, y: 10}).build(); // wall
+    world.create_entity().with(Position { x: 0, y: 0 }).with(Moverable {}).with(EntityType::PlayerRight).build(); // player
+    world.create_entity().with(Position { x: 10, y: 10}).with(EntityType::Wall).build(); // wall
+    world.create_entity().with(Position { x: 11, y: 11}).with(EntityType::Crate).build(); // crate
 
     let my_game = MyGame::new(&mut ctx, world);
     event::run(ctx, event_loop, my_game);
