@@ -1,0 +1,9 @@
+[package]
+name = "part-04"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+specs = { version = "0.20", features = ["derive"] }
+ggez = "0.9"  # windows: gcc.exe
+keyframe = "1.1"
